@@ -4,17 +4,17 @@ namespace App\Services;
 
 use App\Models\Aircraft;
 use App\Models\Airport;
-use App\Models\Flight;
 use Exception;
 use DateTime;
 
 class FlightService
 {
-    private DateTime $date_from;
-    private DateTime $date_to;
     private Aircraft $aircraft;
 
-    public function airportStopInformation(string $tail, DateTime $date_from, DateTime $date_to)
+    /**
+     * @throws Exception
+     */
+    public function airportStopInformation(string $tail, DateTime $date_from, DateTime $date_to): array
     {
         $flightsFilterDate = $this->getFilterFlights($tail, $date_from, $date_to);
         return $this->getInfoStayAircraft($flightsFilterDate);
@@ -25,22 +25,9 @@ class FlightService
      */
     public function getFilterFlights(string $tail, DateTime $date_from, DateTime $date_to): array
     {
-        $filterFligts = [];
         $this->aircraft = Aircraft::firstWhere('tail', $tail);
-        $this->date_from = $date_from;
-        $this->date_to = $date_to;
-
-        $flights_aircraft = $this->aircraft
-            ->flights
-            ->filter(function ($value, $key){
-                $date_takeoff = new DateTime($value->takeoff);
-                return $date_takeoff>=$this->date_from&&$date_takeoff<=$this->date_to;
-            })
-            ->sortBy(['takeoff', 'asc']);
-        foreach ($flights_aircraft as $value){
-            $filterFligts[] = $value;
-        }
-        return $filterFligts;
+        return $this->aircraft
+            ->flightsFilter($date_from, $date_to)->get()->toArray();
     }
 
     public function getInfoAirport($airport_id)
@@ -48,59 +35,56 @@ class FlightService
         return Airport::find($airport_id);
     }
 
-    public function getInfoLandingffFirstFlight($airport_id_takeoff, $takeoffDate)
+    public function getInfoLandingffFirstFlight($airport_id_takeoff, $takeoffDate): array
     {
-        $flights = Flight::all();
-        return  $flights
-            ->where('aircraft_id', $this->aircraft->id)
-            ->where('airport_id2', $airport_id_takeoff)
-            ->firstWhere('landing', '<=' ,$takeoffDate);
+        return$this->aircraft->flightsRelativeTakeoff($airport_id_takeoff, $takeoffDate)->get()->toArray();
     }
 
-    public function getInfoTakeofLastFlight($airport_id_takeoff, $takeoffData)
+    public function getInfoTakeofLastFlight($airport_id_takeoff, $landingfData): array
     {
-        $flights = Flight::all();
-        return  $flights
-            ->where('aircraft_id', $this->aircraft->id)
-            ->where('airport_id2', $airport_id_takeoff)
-            ->firstWhere('landing', '>=' ,$takeoffData);
+        return $this->aircraft->flightsRelativeLanding($airport_id_takeoff, $landingfData)->get()->toArray();
     }
 
+    /**
+     * @throws Exception
+     */
     public function getInfoStayAircraft($flights): array
     {
         $airport_parking =[];
         foreach ($flights as $key => $flight){
-            $airport = $this->getInfoAirport($flight->airport_id1);
-            $airport_parking[$key]["airport_id"] = $airport->id;
+            $airport = $this->getInfoAirport($flight['airport_id1']);
+            $airport_parking[$key]["airport_id"] = $airport['id'];
             $airport_parking[$key]["code_iata"] = $airport->code_iata;
             $airport_parking[$key]["code_icao"] = $airport->code_icao;
-            $airport_parking[$key]["cargo_load"] = $flight->cargo_load;
+            $airport_parking[$key]["cargo_load"] = $flight['cargo_load'];
             if($key==0){
-                $infoLanding=$this->getInfoLandingffFirstFlight($airport->id, $flight->takeoff);
+                $infoLanding=$this->getInfoLandingffFirstFlight($airport->id, new DateTime($flight['takeoff']));
                 if($infoLanding){
-                    $airport_parking[$key]["cargo_offload"] = $infoLanding->cargo_offload;
-                    $airport_parking[$key]["landing"] = $infoLanding->landing;
+                    if(count($infoLanding)){
+                        $airport_parking[$key]["cargo_offload"] = $infoLanding[0]['cargo_offload'];
+                        $airport_parking[$key]["landing"] = $infoLanding[0]['landing'];
+                    }
                 }
             }else{
-                $airport_parking[$key]["cargo_offload"] = $flights[$key-1]->cargo_offload;
-                $airport_parking[$key]["landing"] = $flights[$key-1]->landing;
+                $airport_parking[$key]["cargo_offload"] = $flights[$key-1]['cargo_offload'];
+                $airport_parking[$key]["landing"] = $flights[$key-1]['landing'];
             }
-            $airport_parking[$key]["takeoff"] = $flight->takeoff;
+            $airport_parking[$key]["takeoff"] = $flight['takeoff'];
             if($key+1==count($flights)){
-                $airportLast = $this->getInfoAirport($flight->airport_id2);
-                $infoLastTakeoff = $this->getInfoTakeofLastFlight($airportLast->id, $flight->landing);
+                $airportLast = $this->getInfoAirport($flight['airport_id2']);
+                $infoLastTakeoff = $this->getInfoTakeofLastFlight($airportLast->id, new DateTime($flight['landing']));
                 $airport_parking[$key+1]["airport_id"] = $airport->id;
                 $airport_parking[$key+1]["code_iata"] = $airport->code_iata;
                 $airport_parking[$key+1]["code_icao"] = $airport->code_icao;
-                if($infoLastTakeoff){
-                    $airport_parking[$key+1]["cargo_load"] = $infoLastTakeoff->cargo_load;
+                if(count($infoLastTakeoff)){
+                    $airport_parking[$key+1]["cargo_load"] = $infoLastTakeoff[0]['cargo_load'];
                 }else{
                     $airport_parking[$key+1]["cargo_load"] = null;
                 }
-                $airport_parking[$key+1]["cargo_offload"] = $flight->cargo_offload;
-                $airport_parking[$key+1]["landing"] = $flight->landing;
-                if($infoLastTakeoff){
-                    $airport_parking[$key+1]["takeoff"] = $infoLastTakeoff->takeoff;
+                $airport_parking[$key+1]["cargo_offload"] = $flight['cargo_offload'];
+                $airport_parking[$key+1]["landing"] = $flight['landing'];
+                if(count($infoLastTakeoff)){
+                    $airport_parking[$key+1]["takeoff"] = $infoLastTakeoff[0]['takeoff'];
                 }else{
                     $airport_parking[$key+1]["takeoff"] = null;
                 }
